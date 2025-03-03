@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import './styles/App.css'
+import './styles/InvalidApps.css'
 import AppList from './components/AppList'
 import Loading from './components/Loading'
+import { InvalidApps } from './components/InvalidApps'
 import { InstalledApp } from './types/InstalledApp'
 
 function App(): JSX.Element {
@@ -98,11 +100,7 @@ function App(): JSX.Element {
                         )}
                     </>
                 )}
-                {currentView === 'invalid' && (
-                    <div className="header">
-                        <h1>无效安装</h1>
-                    </div>
-                )}
+                {currentView === 'invalid' && <InvalidApps />}
                 {currentView === 'tools' && (
                     <div className="header">
                         <h1>系统工具</h1>
