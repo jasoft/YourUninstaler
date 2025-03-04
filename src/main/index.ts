@@ -2,12 +2,21 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { extractIconEx, registerIconProtocol } from './iconExtractor'
+import { extractIconEx, registerIconProtocol } from './utils/iconExtractor'
 import log from 'electron-log'
 import { executeCommandSync } from './utils/uninstall'
 import { checkInvalidApps, getInvalidAppsSummary } from './utils/appChecker'
 import { runPowerShellCommand } from './utils/powershell'
-import { getInstalledApps } from './utils/appUtils'
+import { getInstalledApps } from './utils/appManager'
+import { runFullBenchmark } from './utils/benchmark'
+
+// 当应用准备就绪后执行benchmark
+app.whenReady().then(async () => {
+    // 其他初始化代码
+
+    // 执行benchmark测试 (可选，仅在需要测试时启用)
+    await runFullBenchmark(100)
+})
 
 function createWindow(): void {
     // Create the browser window.
