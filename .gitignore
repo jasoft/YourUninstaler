@@ -6,3 +6,4 @@ out
 *.log*
 icons/
 build/
+applist.json

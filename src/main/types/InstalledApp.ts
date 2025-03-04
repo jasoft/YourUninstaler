@@ -10,4 +10,5 @@ export interface InstalledApp {
     InstallLocation: string
     DisplayIcon: string
     appId?: string
+    RegistryKey: string // 注册表项路径
 }

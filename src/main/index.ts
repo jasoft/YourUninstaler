@@ -2,11 +2,18 @@ import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
-import { execSync } from 'child_process'
 import { extractIconEx, registerIconProtocol } from './iconExtractor'
 import log from 'electron-log'
 import { InstalledApp } from './types/InstalledApp'
 import { executeCommandSync } from './utils/uninstall'
+import { checkInvalidApps, getInvalidAppsSummary } from './utils/appChecker'
+import { runPowerShellScript } from './utils/powershell'
+
+interface PowerShellAppsResult {
+    success: boolean
+    apps?: InstalledApp[]
+    error?: string
+}
 
 function createWindow(): void {
     // Create the browser window.
@@ -43,126 +50,67 @@ function createWindow(): void {
     }
 }
 
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
-app.whenReady().then(() => {
-    // Set app user model id for windows
-    electronApp.setAppUserModelId('com.electron')
-
-    // 注册自定义图标协议
-    registerIconProtocol()
-
-    // Default open or close DevTools by F12 in development
-    // and ignore CommandOrControl + R in production.
-    // see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-    app.on('browser-window-created', (_, window) => {
-        optimizer.watchWindowShortcuts(window)
-    })
-
-    // 设置IPC处理程序
-    setupIpcHandlers()
-
-    createWindow()
-
-    app.on('activate', function () {
-        // On macOS it's common to re-create a window in the app when the
-        // dock icon is clicked and there are no other windows open.
-        if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
-})
-
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
-app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        app.quit()
-    }
-})
-
 // 设置IPC处理程序
 function setupIpcHandlers(): void {
-    // 执行PowerShell命令的函数，支持UTF-8编码
-    function runPowerShellCommand(command: string): {
-        success: boolean
-        output?: string
-        error?: string
-    } {
-        try {
-            // 确保命令使用UTF-8编码
-            const encodedCommand =
-                `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command};`.replace(
-                    /\r?\n/g,
-                    ' '
-                )
-
-            // 替换命令中的换行符，并使用execSync执行
-            const finalCommand = `powershell -command "${encodedCommand}"`
-            log.info(`执行PowerShell命令: ${finalCommand}`)
-            const result = execSync(finalCommand, {
-                encoding: 'utf8',
-                maxBuffer: 1024 * 1024 * 10 // 10MB buffer for large outputs
-            }).toString()
-
-            return { success: true, output: result }
-        } catch (error: unknown) {
-            console.error('执行PowerShell命令时出错:', error)
-            return {
-                success: false,
-                error: error instanceof Error ? error.message : String(error)
-            }
-        }
-    }
-
     // 获取已安装的软件列表（不包含图标）
     ipcMain.handle('get-installed-apps', async () => {
         log.info('获取已安装的软件列表')
         try {
             // 使用PowerShell命令获取已安装软件
             const command = `
-        Get-ItemProperty HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | 
-        Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, UninstallString, InstallLocation, DisplayIcon |
-        Where-Object { $_.DisplayName -and $_.UninstallString } |
-        ConvertTo-Json -Depth 1
-      `
-
-            const result = runPowerShellCommand(command)
-            if (!result.success) {
-                throw new Error(result.error)
-            }
-
-            const output = result.output
-            if (!output) {
-                throw new Error('未从PowerShell命令中收到输出')
-            }
-
-            let apps = JSON.parse(output)
-
-            // 确保返回的是数组
-            if (!Array.isArray(apps)) {
-                apps = [apps]
-            }
-
-            // 处理每个应用，格式化安装日期和分配唯一ID
-            // 使用导入的 InstalledApp 接口
-            ;(apps as InstalledApp[]).forEach((app: InstalledApp, index: number) => {
-                // 格式化安装日期
-                if (app.InstallDate) {
-                    const year: string = app.InstallDate.substring(0, 4)
-                    const month: string = app.InstallDate.substring(4, 6)
-                    const day: string = app.InstallDate.substring(6, 8)
-                    app.InstallDate = `${year}-${month}-${day}`
+                $result = @{
+                    success = $true
+                    apps = @()
+                }
+                
+                $paths = @(
+                    'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+                    'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+                )
+                
+                foreach ($path in $paths) {
+                    $items = Get-ItemProperty $path
+                    foreach ($item in $items) {
+                        if ($item.DisplayName -and $item.UninstallString) {
+                            $item | Add-Member -MemberType NoteProperty -Name 'registryKey' -Value $item.PSPath -Force
+                            $result.apps += $item
+                        }
+                    }
                 }
 
-                // 分配唯一ID
-                app.appId = `app-${index}`
-            })
+                $result.apps = $result.apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, UninstallString, InstallLocation, DisplayIcon, registryKey
+                $result | ConvertTo-Json -Depth 1 -Compress
+            `
 
-            return apps
+            const cmdResult = runPowerShellScript(command)
+            log.info('PowerShell命令执行结果:', cmdResult)
+            if (!cmdResult.success || !cmdResult.output) {
+                throw new Error(cmdResult.error || '执行PowerShell命令失败')
+            }
+
+            const result = JSON.parse(cmdResult.output) as PowerShellAppsResult
+            if (!result.success) {
+                throw new Error(result.error || '获取应用列表失败')
+            }
+
+            const rawApps: InstalledApp[] = result.apps || []
+            log.info('获取到原始应用列表:', { count: rawApps.length })
+
+            // 处理每个应用，格式化安装日期和分配唯一ID
+            const formattedApps: InstalledApp[] = rawApps.map((app, index) => ({
+                ...app,
+                InstallDate: app.InstallDate
+                    ? `${app.InstallDate.substring(0, 4)}-${app.InstallDate.substring(4, 6)}-${app.InstallDate.substring(6, 8)}`
+                    : '',
+                appId: `app-${index}`
+            }))
+
+            log.info('应用列表处理完成:', { count: formattedApps.length })
+            return formattedApps
         } catch (error) {
-            console.error('获取应用列表时出错:', error)
-            return []
+            const errorMessage = error instanceof Error ? error.message : String(error)
+            log.error('获取应用列表时出错:', errorMessage)
+            throw error
         }
     })
 
@@ -200,11 +148,112 @@ function setupIpcHandlers(): void {
                 return result
             }
         } catch (error) {
-            log.error('获取应用图标失败:', { 
+            log.error('获取应用图标失败:', {
                 displayIcon,
                 error: error instanceof Error ? error.message : String(error)
             })
             return null
+        }
+    })
+
+    // 检查无效应用
+    ipcMain.handle('check-invalid-apps', async () => {
+        try {
+            // 获取所有应用列表
+            const command = `
+                $result = @{
+                    success = $true
+                    apps = @()
+                }
+                
+                $paths = @(
+                    'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+                    'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
+                )
+                
+                foreach ($path in $paths) {
+                    $items = Get-ItemProperty $path
+                    foreach ($item in $items) {
+                        if ($item.DisplayName -and $item.UninstallString) {
+                            $item | Add-Member -MemberType NoteProperty -Name 'registryKey' -Value $item.PSPath -Force
+                            $result.apps += $item
+                        }
+                    }
+                }
+
+                $result.apps = $result.apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, UninstallString, InstallLocation, DisplayIcon, registryKey
+                $result | ConvertTo-Json -Depth 1 -Compress
+            `
+
+            const cmdResult = runPowerShellScript(command)
+            log.info('获取应用列表完成:', { success: cmdResult.success, output: cmdResult.output })
+            if (!cmdResult.success || !cmdResult.output) {
+                throw new Error(cmdResult.error || '执行PowerShell命令失败')
+            }
+
+            const result = JSON.parse(cmdResult.output) as PowerShellAppsResult
+            if (!result.success) {
+                throw new Error(result.error || '获取应用列表失败')
+            }
+
+            const rawApps: InstalledApp[] = result.apps || []
+            const formattedApps: InstalledApp[] = rawApps.map((app: InstalledApp, index) => ({
+                ...app,
+                InstallDate: app.InstallDate
+                    ? `${app.InstallDate.substring(0, 4)}-${app.InstallDate.substring(4, 6)}-${app.InstallDate.substring(6, 8)}`
+                    : '',
+                appId: `app-${index}`
+            }))
+
+            // 检查无效应用
+            const invalidApps = checkInvalidApps(formattedApps)
+            const summary = getInvalidAppsSummary(invalidApps)
+
+            log.info('完成无效应用检查:', {
+                totalApps: formattedApps.length,
+                invalidApps: invalidApps.length
+            })
+
+            return { invalidApps, summary }
+        } catch (error) {
+            log.error('检查无效应用时出错:', error)
+            return {
+                invalidApps: [],
+                summary: {
+                    registryCount: 0,
+                    fileCount: 0,
+                    uninstallerCount: 0,
+                    totalSize: '0 B'
+                }
+            }
+        }
+    })
+
+    // 清理无效注册表项
+    ipcMain.handle('cleanup-registry', async (_, registryKey: string) => {
+        try {
+            const command = `Remove-Item -Path "${registryKey}" -Force`
+            const result = runPowerShellScript(command)
+            return { success: result.success, error: result.error }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            }
+        }
+    })
+
+    // 删除残留文件
+    ipcMain.handle('cleanup-files', async (_, filePath: string) => {
+        try {
+            const command = `Remove-Item -Path "${filePath}" -Recurse -Force`
+            const result = runPowerShellScript(command)
+            return { success: result.success, error: result.error }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : String(error)
+            }
         }
     })
 
@@ -213,11 +262,8 @@ function setupIpcHandlers(): void {
         try {
             // 处理卸载命令
             const command = uninstallString.trim()
-
-            log.info(`执行卸载命令1: ${command}`)
-
+            log.info(`执行卸载命令: ${command}`)
             executeCommandSync(command)
-
             return { success: true }
         } catch (error) {
             log.error('卸载应用时出错:', error)
@@ -234,3 +280,39 @@ function setupIpcHandlers(): void {
         }
     })
 }
+
+// This method will be called when Electron has finished
+// initialization and is ready to create browser windows.
+app.whenReady().then(() => {
+    // Set app user model id for windows
+    electronApp.setAppUserModelId('com.electron')
+
+    // 注册自定义图标协议
+    registerIconProtocol()
+
+    // Default open or close DevTools by F12 in development
+    // and ignore CommandOrControl + R in production.
+    app.on('browser-window-created', (_, window) => {
+        optimizer.watchWindowShortcuts(window)
+    })
+
+    // 设置IPC处理程序
+    setupIpcHandlers()
+
+    createWindow()
+
+    app.on('activate', function () {
+        // On macOS it's common to re-create a window in the app when the
+        // dock icon is clicked and there are no other windows open.
+        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+})
+
+// Quit when all windows are closed, except on macOS. There, it's common
+// for applications and their menu bar to stay active until the user quits
+// explicitly with Cmd + Q.
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit()
+    }
+})

@@ -21,12 +21,10 @@ const AppList = ({ apps, onUninstall, searchTerm, onSearchChange }: AppListProps
 
     // 异步加载应用图标
     const loadAppIcons = async (appsToLoad: InstalledApp[]): Promise<void> => {
-        const newApps = appsToLoad.filter(app => 
-            app.DisplayIcon && 
-            app.appId && 
-            !globalIconCache.has(app.appId)
+        const newApps = appsToLoad.filter(
+            (app) => app.DisplayIcon && app.appId && !globalIconCache.has(app.appId)
         )
-        
+
         if (newApps.length === 0) return
 
         for (const app of newApps) {
@@ -37,7 +35,7 @@ const AppList = ({ apps, onUninstall, searchTerm, onSearchChange }: AppListProps
                 )
                 if (iconPath && app.appId) {
                     globalIconCache.set(app.appId!, iconPath)
-                    forceUpdate({})  // 触发重新渲染
+                    forceUpdate({}) // 触发重新渲染
                 }
             } catch (error) {
                 console.error(`加载应用 ${app.DisplayName || '未知'} 的图标时出错:`, error)
@@ -47,7 +45,7 @@ const AppList = ({ apps, onUninstall, searchTerm, onSearchChange }: AppListProps
 
     useEffect(() => {
         // 只在组件初始化和新应用加入时加载图标
-        const uncachedApps = apps.filter(app => app.appId && !globalIconCache.has(app.appId))
+        const uncachedApps = apps.filter((app) => app.appId && !globalIconCache.has(app.appId))
         if (uncachedApps.length > 0) {
             loadAppIcons(apps)
         }
@@ -137,11 +135,7 @@ const AppList = ({ apps, onUninstall, searchTerm, onSearchChange }: AppListProps
                     className="app-icon"
                 />
             ) : (
-                <img
-                    src={defaultAppIcon}
-                    alt="默认应用图标"
-                    className="app-icon"
-                />
+                <img src={defaultAppIcon} alt="默认应用图标" className="app-icon" />
             )}
             <div className="app-info">
                 <div className="app-name">{app.DisplayName || '未知'}</div>
