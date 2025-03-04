@@ -4,16 +4,10 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { extractIconEx, registerIconProtocol } from './iconExtractor'
 import log from 'electron-log'
-import { InstalledApp } from './types/InstalledApp'
 import { executeCommandSync } from './utils/uninstall'
 import { checkInvalidApps, getInvalidAppsSummary } from './utils/appChecker'
-import { runPowerShellScript } from './utils/powershell'
-
-interface PowerShellAppsResult {
-    success: boolean
-    apps?: InstalledApp[]
-    error?: string
-}
+import { runPowerShellCommand } from './utils/powershell'
+import { getInstalledApps } from './utils/appUtils'
 
 function createWindow(): void {
     // Create the browser window.
@@ -55,57 +49,9 @@ function setupIpcHandlers(): void {
     // 获取已安装的软件列表（不包含图标）
     ipcMain.handle('get-installed-apps', async () => {
         log.info('获取已安装的软件列表')
+
         try {
-            // 使用PowerShell命令获取已安装软件
-            const command = `
-                $result = @{
-                    success = $true
-                    apps = @()
-                }
-                
-                $paths = @(
-                    'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-                    'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
-                )
-                
-                foreach ($path in $paths) {
-                    $items = Get-ItemProperty $path
-                    foreach ($item in $items) {
-                        if ($item.DisplayName -and $item.UninstallString) {
-                            $item | Add-Member -MemberType NoteProperty -Name 'registryKey' -Value $item.PSPath -Force
-                            $result.apps += $item
-                        }
-                    }
-                }
-
-                $result.apps = $result.apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, UninstallString, InstallLocation, DisplayIcon, registryKey
-                $result | ConvertTo-Json -Depth 1 -Compress
-            `
-
-            const cmdResult = runPowerShellScript(command)
-            log.info('PowerShell命令执行结果:', cmdResult)
-            if (!cmdResult.success || !cmdResult.output) {
-                throw new Error(cmdResult.error || '执行PowerShell命令失败')
-            }
-
-            const result = JSON.parse(cmdResult.output) as PowerShellAppsResult
-            if (!result.success) {
-                throw new Error(result.error || '获取应用列表失败')
-            }
-
-            const rawApps: InstalledApp[] = result.apps || []
-            log.info('获取到原始应用列表:', { count: rawApps.length })
-
-            // 处理每个应用，格式化安装日期和分配唯一ID
-            const formattedApps: InstalledApp[] = rawApps.map((app, index) => ({
-                ...app,
-                InstallDate: app.InstallDate
-                    ? `${app.InstallDate.substring(0, 4)}-${app.InstallDate.substring(4, 6)}-${app.InstallDate.substring(6, 8)}`
-                    : '',
-                appId: `app-${index}`
-            }))
-
-            log.info('应用列表处理完成:', { count: formattedApps.length })
+            const formattedApps = await getInstalledApps()
             return formattedApps
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error)
@@ -160,50 +106,8 @@ function setupIpcHandlers(): void {
     ipcMain.handle('check-invalid-apps', async () => {
         try {
             // 获取所有应用列表
-            const command = `
-                $result = @{
-                    success = $true
-                    apps = @()
-                }
-                
-                $paths = @(
-                    'HKLM:\\Software\\Wow6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
-                    'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'
-                )
-                
-                foreach ($path in $paths) {
-                    $items = Get-ItemProperty $path
-                    foreach ($item in $items) {
-                        if ($item.DisplayName -and $item.UninstallString) {
-                            $item | Add-Member -MemberType NoteProperty -Name 'registryKey' -Value $item.PSPath -Force
-                            $result.apps += $item
-                        }
-                    }
-                }
-
-                $result.apps = $result.apps | Select-Object DisplayName, DisplayVersion, Publisher, InstallDate, UninstallString, InstallLocation, DisplayIcon, registryKey
-                $result | ConvertTo-Json -Depth 1 -Compress
-            `
-
-            const cmdResult = runPowerShellScript(command)
-            log.info('获取应用列表完成:', { success: cmdResult.success, output: cmdResult.output })
-            if (!cmdResult.success || !cmdResult.output) {
-                throw new Error(cmdResult.error || '执行PowerShell命令失败')
-            }
-
-            const result = JSON.parse(cmdResult.output) as PowerShellAppsResult
-            if (!result.success) {
-                throw new Error(result.error || '获取应用列表失败')
-            }
-
-            const rawApps: InstalledApp[] = result.apps || []
-            const formattedApps: InstalledApp[] = rawApps.map((app: InstalledApp, index) => ({
-                ...app,
-                InstallDate: app.InstallDate
-                    ? `${app.InstallDate.substring(0, 4)}-${app.InstallDate.substring(4, 6)}-${app.InstallDate.substring(6, 8)}`
-                    : '',
-                appId: `app-${index}`
-            }))
+            log.info('开始检查无效应用')
+            const formattedApps = await getInstalledApps()
 
             // 检查无效应用
             const invalidApps = checkInvalidApps(formattedApps)
@@ -232,8 +136,9 @@ function setupIpcHandlers(): void {
     // 清理无效注册表项
     ipcMain.handle('cleanup-registry', async (_, registryKey: string) => {
         try {
+            log.info('开始执行清理注册表命令:', registryKey)
             const command = `Remove-Item -Path "${registryKey}" -Force`
-            const result = runPowerShellScript(command)
+            const result = runPowerShellCommand(command)
             return { success: result.success, error: result.error }
         } catch (error) {
             return {
@@ -246,8 +151,9 @@ function setupIpcHandlers(): void {
     // 删除残留文件
     ipcMain.handle('cleanup-files', async (_, filePath: string) => {
         try {
+            log.info('开始执行清理文件命令:', filePath)
             const command = `Remove-Item -Path "${filePath}" -Recurse -Force`
-            const result = runPowerShellScript(command)
+            const result = runPowerShellCommand(command)
             return { success: result.success, error: result.error }
         } catch (error) {
             return {

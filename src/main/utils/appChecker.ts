@@ -21,7 +21,7 @@ export function checkInvalidApps(apps: InstalledApp[]): InvalidApp[] {
                 type: 'registry',
                 category: 'HKEY_LOCAL_MACHINE',
                 details: `${app.DisplayName} 的注册表项仍然存在，但安装目录已不存在`,
-                path: app.registryKey,
+                path: app.RegistryKey,
                 action: '清理注册表项'
             })
         }
