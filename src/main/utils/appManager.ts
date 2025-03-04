@@ -1,6 +1,5 @@
 import log from 'electron-log'
 import { InstalledApp } from '../types/InstalledApp'
-import { runPowerShellScript } from './powershell'
 import path from 'path'
 import { app } from 'electron'
 import { execSync } from 'child_process'
@@ -20,11 +19,25 @@ interface PowerShellAppsResult {
 export async function getInstalledApps(): Promise<InstalledApp[]> {
     log.info('开始执行PowerShell命令获取应用列表')
     const getInstalledAppScript = path.join(app.getAppPath(), 'resources', 'get-installed-apps.exe')
-    const cmdResult = execSync(getInstalledAppScript).toString()
-    log.info('获取appslist命令执行结果:', cmdResult)
+    let cmdResult: string
+    try {
+        cmdResult = execSync(getInstalledAppScript).toString()
+        log.info('获取appslist命令执行结果:', cmdResult)
+    } catch (error) {
+        log.error('执行PowerShell脚本失败:', error)
+        throw new Error('执行PowerShell脚本失败')
+    }
 
-    const result = JSON.parse(cmdResult) as PowerShellAppsResult
+    let result: PowerShellAppsResult
+    try {
+        result = JSON.parse(cmdResult) as PowerShellAppsResult
+    } catch (error) {
+        log.error('解析PowerShell脚本结果失败:', error)
+        throw new Error('解析PowerShell脚本结果失败')
+    }
+
     if (!result.success) {
+        log.error('PowerShell脚本返回错误:', result.error)
         throw new Error(result.error || '获取应用列表失败')
     }
 

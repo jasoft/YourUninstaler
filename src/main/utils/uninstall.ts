@@ -1,15 +1,20 @@
 import { execSync } from 'child_process'
 import * as fs from 'fs'
 
-function parseUninstallCommand(str: string): { path: string; args: string } | null {
+export function parseUninstallCommand(str: string): { path: string; args: string } | null {
     // 处理已用引号包裹的路径
     if (str.startsWith('"')) {
         const endIdx = str.indexOf('"', 1)
         if (endIdx !== -1) {
-            return {
-                path: str.substring(1, endIdx),
-                args: str.substring(endIdx + 1).trim()
+            const path = str.substring(1, endIdx)
+            const args = str.substring(endIdx + 1).trim()
+
+            // 检查路径是否有效（不包含额外引号且文件存在）
+            if (path.includes('"') || !fs.existsSync(path)) {
+                return null
             }
+
+            return { path, args }
         }
     }
 

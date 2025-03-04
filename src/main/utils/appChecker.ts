@@ -1,5 +1,6 @@
 import fs from 'fs'
 import { InstalledApp } from '../types/InstalledApp'
+import { parseUninstallCommand } from './uninstall'
 
 export interface InvalidApp {
     name: string
@@ -27,7 +28,12 @@ export function checkInvalidApps(apps: InstalledApp[]): InvalidApp[] {
         }
 
         // 检查卸载字符串是否有效
-        if (!app.UninstallString || !fs.existsSync(app.UninstallString.split(' ')[0])) {
+        const parsedUninstallString = parseUninstallCommand(app.UninstallString)
+        if (
+            !app.UninstallString ||
+            !parsedUninstallString ||
+            !fs.existsSync(parsedUninstallString.path)
+        ) {
             invalidApps.push({
                 name: app.DisplayName,
                 type: 'uninstaller',

@@ -158,6 +158,7 @@ export const InvalidApps: React.FC = () => {
             <div className="issues-container">
                 {issues.map((issue, index) => (
                     <div className="issue-card" key={index}>
+                        <div className="issue-name">{issue.name}</div>
                         <div className="issue-type">
                             <svg
                                 xmlns="http://www.w3.org/2000/svg"
