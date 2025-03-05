@@ -18,10 +18,10 @@ interface PowerShellAppsResult {
  */
 export async function getInstalledApps(): Promise<InstalledApp[]> {
     log.info('开始执行PowerShell命令获取应用列表')
-    const getInstalledAppScript = path.join(app.getAppPath(), 'resources', 'get-installed-apps.exe')
+    const getInstalledAppScript = path.join(app.getAppPath(), 'resources', 'appman.exe')
     let cmdResult: string
     try {
-        cmdResult = execSync(getInstalledAppScript).toString()
+        cmdResult = execSync(`${getInstalledAppScript} export`).toString()
         log.info('获取appslist命令执行结果:', cmdResult)
     } catch (error) {
         log.error('执行PowerShell脚本失败:', error)

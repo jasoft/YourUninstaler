@@ -7,3 +7,4 @@ out
 icons/
 build/
 applist.json
+*.appman.exe

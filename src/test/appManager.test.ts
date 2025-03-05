@@ -82,7 +82,7 @@ describe('appManager', () => {
             // 验证 execSync 被正确调用
             expect(childProcess.execSync).toHaveBeenCalledTimes(1)
             expect(childProcess.execSync).toHaveBeenCalledWith(
-                '\\mock\\app\\path\\resources\\get-installed-apps.exe'
+                '\\mock\\app\\path\\resources\\appman.exe export'
             )
         })
 
